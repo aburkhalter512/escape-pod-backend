@@ -91,18 +91,23 @@ function fakePodRoundSignupRow(overrides: Partial<PodRoundSignupRow> = {}): PodR
 
 // podRound.findUnique is called both with and without `include: {organizer:
 // true}` (see routes/pods.ts), so AppPrismaClient keeps it generic like
-// Prisma's own method. A concrete stub can't be assigned directly to a
-// generic method slot, so this wraps one in a thin adapter — the one
-// deliberate cast in this file, isolated to bridging that gap.
+// Prisma's own method — real Prisma computes the return shape from the
+// args' `include`/`select` at each call site, which a fixed test double
+// can't replicate generically. This stub stays genuinely generic (same
+// signature as the real method, so it assigns with no cast at the
+// interface boundary); the one unavoidable cast is internal, converting
+// the test's fixed `impl()` result into "whatever shape T asked for" —
+// each test already knows which shape it's simulating.
 function stubPodRoundFindUnique<Result>(impl: () => Promise<Result>) {
   const calls: Prisma.PodRoundFindUniqueArgs[] = []
-  const fn = async (args: Prisma.PodRoundFindUniqueArgs) => {
+  function findUnique<T extends Prisma.PodRoundFindUniqueArgs>(
+    args: Prisma.SelectSubset<T, Prisma.PodRoundFindUniqueArgs>
+  ): Promise<Prisma.PodRoundGetPayload<T> | null> {
     calls.push(args)
-    return impl()
+    return impl() as unknown as Promise<Prisma.PodRoundGetPayload<T> | null>
   }
-  return Object.assign(fn, { calls }) as unknown as AppPrismaClient['podRound']['findUnique'] & {
-    calls: Prisma.PodRoundFindUniqueArgs[]
-  }
+  findUnique.calls = calls
+  return findUnique
 }
 
 function buildApp(overrides: { prisma?: FakePrismaOverrides; ptp?: Partial<PtpClient> } = {}) {

@@ -1,24 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import type { FastifyReply, FastifyRequest } from 'fastify'
-import { requireBotApiKey } from './auth.js'
+import { requireBotApiKey, type MinimalFastifyReply, type MinimalFastifyRequest } from './auth.js'
 
-function fakeRequest(authorization: string | undefined): FastifyRequest {
-  return { headers: { authorization } } as unknown as FastifyRequest
+function fakeRequest(authorization: string | undefined): MinimalFastifyRequest {
+  return { headers: { authorization } }
 }
 
 function fakeReply() {
   const calls: { code?: number; sent?: unknown } = {}
-  const reply = {
-    code(status: number) {
+  const reply: MinimalFastifyReply = {
+    code(status) {
       calls.code = status
       return reply
     },
-    send(payload: unknown) {
+    send(payload) {
       calls.sent = payload
       return reply
     },
   }
-  return { reply: reply as unknown as FastifyReply, calls }
+  return { reply, calls }
 }
 
 describe('requireBotApiKey', () => {
