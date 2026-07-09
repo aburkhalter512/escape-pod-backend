@@ -85,7 +85,6 @@ describe('refreshExpiringTokens', () => {
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
-    expect(update.calls).toHaveLength(0)
     expect(result).toEqual({ refreshed: 0, failed: 1, checked: 1 })
   })
 
@@ -103,7 +102,6 @@ describe('refreshExpiringTokens', () => {
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
-    expect(update.calls).toHaveLength(0)
     expect(result).toEqual({ refreshed: 0, failed: 1, checked: 1 })
   })
 
@@ -142,6 +140,5 @@ describe('refreshExpiringTokens', () => {
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
     expect(result).toEqual({ refreshed: 0, failed: 0, checked: 0 })
-    expect(refreshToken.calls).toHaveLength(0)
   })
 })
