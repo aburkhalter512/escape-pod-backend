@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify'
-import type { PrismaClient } from '@prisma/client'
+import type { AppPrismaClient } from '../prismaClient.js'
 import { z } from 'zod'
 
 export interface GuildRouteDeps {
-  prisma: PrismaClient
+  prisma: AppPrismaClient
 }
 
 const subscribeGuildBodySchema = z.object({

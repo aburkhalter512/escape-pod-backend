@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import Fastify from 'fastify'
 import { zodValidatorCompiler } from '../validation.js'
-import type { PrismaClient } from '@prisma/client'
 import type { PtpClient } from '../ptp/client.js'
+import { createFakePrismaClient, type FakePrismaOverrides } from '../testUtils/fakePrismaClient.js'
+import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { registerOrganizerRoutes } from './organizers.js'
 
 function fakeJwt(payload: Record<string, unknown>): string {
@@ -12,18 +13,11 @@ function fakeJwt(payload: Record<string, unknown>): string {
 
 const FUTURE_EXP = () => Math.floor(Date.now() / 1000) + 3600
 
-function buildApp(overrides: { prisma?: Record<string, unknown>; ptp?: Partial<PtpClient> } = {}) {
+function buildApp(overrides: { prisma?: FakePrismaOverrides; ptp?: Partial<PtpClient> } = {}) {
   const app = Fastify()
   app.setValidatorCompiler(zodValidatorCompiler)
-  const prisma = {
-    organizer: { upsert: vi.fn() },
-    guildSubscription: { findMany: vi.fn() },
-    ...overrides.prisma,
-  } as unknown as PrismaClient
-  const ptp = {
-    validateToken: vi.fn().mockResolvedValue(true),
-    ...overrides.ptp,
-  } as unknown as PtpClient
+  const prisma = createFakePrismaClient(overrides.prisma)
+  const ptp = createFakePtpClient({ validateToken: vi.fn().mockResolvedValue(true), ...overrides.ptp })
 
   // Must be a real 32-byte hex string — encryptToken calls createCipheriv
   // synchronously, so an invalid key throws and the route 500s.

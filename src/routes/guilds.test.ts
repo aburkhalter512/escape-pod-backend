@@ -1,17 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import Fastify from 'fastify'
 import { zodValidatorCompiler } from '../validation.js'
-import type { PrismaClient } from '@prisma/client'
+import { createFakePrismaClient, type FakePrismaOverrides } from '../testUtils/fakePrismaClient.js'
 import { registerGuildRoutes } from './guilds.js'
 
-function buildApp(overrides: { prisma?: Record<string, unknown> } = {}) {
+function buildApp(overrides: { prisma?: FakePrismaOverrides } = {}) {
   const app = Fastify()
   app.setValidatorCompiler(zodValidatorCompiler)
-  const prisma = {
-    guildSubscription: { upsert: vi.fn() },
-    guildOrganizerAllowlist: { upsert: vi.fn() },
-    ...overrides.prisma,
-  } as unknown as PrismaClient
+  const prisma = createFakePrismaClient(overrides.prisma)
 
   registerGuildRoutes(app, { prisma })
   return { app, prisma }

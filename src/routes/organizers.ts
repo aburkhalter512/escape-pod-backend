@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify'
-import type { PrismaClient } from '@prisma/client'
+import type { AppPrismaClient } from '../prismaClient.js'
 import { z } from 'zod'
 import type { PtpClient } from '../ptp/client.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 
 export interface OrganizerRouteDeps {
-  prisma: PrismaClient
+  prisma: AppPrismaClient
   ptp: PtpClient
   tokenEncryptionKey: string
 }

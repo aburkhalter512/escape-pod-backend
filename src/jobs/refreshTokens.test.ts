@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { PrismaClient } from '@prisma/client'
-import type { PtpClient } from '../ptp/client.js'
 import { encryptToken, decryptToken } from '../crypto/tokenCrypto.js'
+import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
+import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { refreshExpiringTokens } from './refreshTokens.js'
 
 const TOKEN_KEY = '00'.repeat(32)
@@ -18,8 +18,8 @@ function fakeOrganizer(discordId: string, token: string) {
 describe('refreshExpiringTokens', () => {
   it('queries for organizers expiring within the refresh window, not all organizers', async () => {
     const findMany = vi.fn().mockResolvedValue([])
-    const prisma = { organizer: { findMany, update: vi.fn() } } as unknown as PrismaClient
-    const ptp = { refreshToken: vi.fn() } as unknown as PtpClient
+    const prisma = createFakePrismaClient({ organizer: { findMany } })
+    const ptp = createFakePtpClient()
 
     await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
@@ -37,10 +37,8 @@ describe('refreshExpiringTokens', () => {
     const organizer = fakeOrganizer('user-1', oldToken)
 
     const update = vi.fn()
-    const prisma = {
-      organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update },
-    } as unknown as PrismaClient
-    const ptp = { refreshToken: vi.fn().mockResolvedValue(newToken) } as unknown as PtpClient
+    const prisma = createFakePrismaClient({ organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update } })
+    const ptp = createFakePtpClient({ refreshToken: vi.fn().mockResolvedValue(newToken) })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
@@ -59,10 +57,8 @@ describe('refreshExpiringTokens', () => {
     const organizer = fakeOrganizer('user-1', oldToken)
 
     const update = vi.fn()
-    const prisma = {
-      organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update },
-    } as unknown as PrismaClient
-    const ptp = { refreshToken: vi.fn().mockResolvedValue(null) } as unknown as PtpClient
+    const prisma = createFakePrismaClient({ organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update } })
+    const ptp = createFakePtpClient({ refreshToken: vi.fn().mockResolvedValue(null) })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
@@ -75,10 +71,8 @@ describe('refreshExpiringTokens', () => {
     const organizer = fakeOrganizer('user-1', oldToken)
 
     const update = vi.fn()
-    const prisma = {
-      organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update },
-    } as unknown as PrismaClient
-    const ptp = { refreshToken: vi.fn().mockResolvedValue('not-a-valid-jwt') } as unknown as PtpClient
+    const prisma = createFakePrismaClient({ organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update } })
+    const ptp = createFakePtpClient({ refreshToken: vi.fn().mockResolvedValue('not-a-valid-jwt') })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
@@ -96,12 +90,12 @@ describe('refreshExpiringTokens', () => {
     })
 
     const organizers = [fakeOrganizer('user-1', successToken), fakeOrganizer('user-2', failToken)]
-    const prisma = {
+    const prisma = createFakePrismaClient({
       organizer: { findMany: vi.fn().mockResolvedValue(organizers), update: vi.fn() },
-    } as unknown as PrismaClient
-    const ptp = {
+    })
+    const ptp = createFakePtpClient({
       refreshToken: vi.fn(async (token: string) => (token === successToken ? refreshedToken : null)),
-    } as unknown as PtpClient
+    })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
@@ -109,10 +103,8 @@ describe('refreshExpiringTokens', () => {
   })
 
   it('returns all-zero counts when nothing is expiring soon', async () => {
-    const prisma = {
-      organizer: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
-    } as unknown as PrismaClient
-    const ptp = { refreshToken: vi.fn() } as unknown as PtpClient
+    const prisma = createFakePrismaClient({ organizer: { findMany: vi.fn().mockResolvedValue([]) } })
+    const ptp = createFakePtpClient()
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 

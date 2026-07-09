@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client'
+import type { AppPrismaClient } from '../prismaClient.js'
 import type { PtpClient } from '../ptp/client.js'
 import { decryptToken, encryptToken } from '../crypto/tokenCrypto.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
@@ -9,7 +9,7 @@ const REFRESH_WINDOW_DAYS = 5
 // expiry using /api/auth/refresh's Set-Cookie response, so organizers don't
 // have to manually re-run /connect-ptp every month. Intended to run on a
 // daily schedule (not wired to a scheduler yet — this is the job body only).
-export async function refreshExpiringTokens(prisma: PrismaClient, ptp: PtpClient, tokenEncryptionKey: string) {
+export async function refreshExpiringTokens(prisma: AppPrismaClient, ptp: PtpClient, tokenEncryptionKey: string) {
   const cutoff = new Date(Date.now() + REFRESH_WINDOW_DAYS * 24 * 60 * 60 * 1000)
 
   const expiring = await prisma.organizer.findMany({

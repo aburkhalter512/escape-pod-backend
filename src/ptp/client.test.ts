@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PtpClient } from './client.js'
+import { HttpPtpClient } from './client.js'
 
-describe('PtpClient', () => {
+describe('HttpPtpClient', () => {
   const fetchMock = vi.fn()
 
   beforeEach(() => {
@@ -14,7 +14,7 @@ describe('PtpClient', () => {
   })
 
   function client() {
-    return new PtpClient({ baseUrl: 'https://www.protectthepod.com' })
+    return new HttpPtpClient({ baseUrl: 'https://www.protectthepod.com' })
   }
 
   describe('validateToken', () => {

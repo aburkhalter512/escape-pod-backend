@@ -19,7 +19,17 @@ export interface CreatePodResult {
   createdAt: string
 }
 
-export class PtpClient {
+// The contract routes/jobs depend on. Real calls happen in HttpPtpClient
+// below; tests get a hand-written stub via testUtils/fakePtpClient.ts that
+// fully satisfies this interface, with no `as unknown as` needed — see the
+// "manual test fixtures over a mocking library" discussion this replaces.
+export interface PtpClient {
+  validateToken(token: string): Promise<boolean>
+  createPod(token: string, params: CreatePodParams): Promise<CreatePodResult>
+  refreshToken(currentToken: string): Promise<string | null>
+}
+
+export class HttpPtpClient implements PtpClient {
   constructor(private readonly config: PtpClientConfig) {}
 
   // §8.2 check (d) — the live validation call at link time. Read-only,

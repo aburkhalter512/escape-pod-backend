@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 import { PrismaClient } from '@prisma/client'
 import { requireBotApiKey } from './auth.js'
-import { PtpClient } from './ptp/client.js'
+import { HttpPtpClient } from './ptp/client.js'
 import { zodValidatorCompiler } from './validation.js'
 import { registerOrganizerRoutes } from './routes/organizers.js'
 import { registerGuildRoutes } from './routes/guilds.js'
@@ -12,7 +12,7 @@ const tokenEncryptionKey = requireEnv('TOKEN_ENCRYPTION_KEY')
 const ptpBaseUrl = requireEnv('PTP_BASE_URL')
 
 const prisma = new PrismaClient()
-const ptp = new PtpClient({ baseUrl: ptpBaseUrl })
+const ptp = new HttpPtpClient({ baseUrl: ptpBaseUrl })
 
 const app = Fastify()
 app.setValidatorCompiler(zodValidatorCompiler)

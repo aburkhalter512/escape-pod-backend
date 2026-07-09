@@ -1,27 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
 import Fastify from 'fastify'
 import { zodValidatorCompiler } from '../validation.js'
-import type { PrismaClient } from '@prisma/client'
 import type { PtpClient } from '../ptp/client.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
+import { createFakePrismaClient, type FakePrismaOverrides } from '../testUtils/fakePrismaClient.js'
+import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { registerPodRoutes } from './pods.js'
 
 const TOKEN_KEY = '00'.repeat(32) // 32-byte hex key, fine for tests
 
-function buildApp(overrides: { prisma?: Record<string, unknown>; ptp?: Partial<PtpClient> } = {}) {
+function buildApp(overrides: { prisma?: FakePrismaOverrides; ptp?: Partial<PtpClient> } = {}) {
   const app = Fastify()
   app.setValidatorCompiler(zodValidatorCompiler)
-  const prisma = {
-    podRound: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    podRoundSignup: { upsert: vi.fn(), count: vi.fn() },
-    podRoundTarget: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn(), update: vi.fn() },
+  const prisma = createFakePrismaClient({
+    podRoundTarget: { findMany: vi.fn().mockResolvedValue([]) },
     guildSubscription: { findMany: vi.fn().mockResolvedValue([]) },
     ...overrides.prisma,
-  } as unknown as PrismaClient
-  const ptp = {
-    createPod: vi.fn(),
-    ...overrides.ptp,
-  } as unknown as PtpClient
+  })
+  const ptp = createFakePtpClient(overrides.ptp)
 
   registerPodRoutes(app, { prisma, ptp, tokenEncryptionKey: TOKEN_KEY })
   return { app, prisma, ptp }

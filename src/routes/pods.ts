@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify'
-import type { PrismaClient } from '@prisma/client'
+import type { AppPrismaClient } from '../prismaClient.js'
 import { z } from 'zod'
 import type { PtpClient } from '../ptp/client.js'
 import { decryptToken } from '../crypto/tokenCrypto.js'
 
 export interface PodRouteDeps {
-  prisma: PrismaClient
+  prisma: AppPrismaClient
   ptp: PtpClient
   tokenEncryptionKey: string
 }
