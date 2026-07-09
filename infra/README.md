@@ -54,7 +54,7 @@ Supply the required variables — either export `TF_VAR_*` env vars, or
 create a gitignored `terraform.auto.tfvars`:
 
 ```hcl
-container_image      = "<account-id>.dkr.ecr.us-east-1.amazonaws.com/escape-pod-backend:latest"
+container_image      = "<account-id>.dkr.ecr.us-west-2.amazonaws.com/escape-pod-backend:latest"
 db_password           = "..."   # generate a strong random value
 token_encryption_key   = "..."  # node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 bot_api_key             = "..."  # shared secret — must match discord-bot's backend_api_key
@@ -67,9 +67,9 @@ until an image actually exists at that URI** — that's expected, not a
 bug. Build and push one after the first apply creates the ECR repo:
 
 ```bash
-docker build -t <account-id>.dkr.ecr.us-east-1.amazonaws.com/escape-pod-backend:latest ..
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
-docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/escape-pod-backend:latest
+docker build -t <account-id>.dkr.ecr.us-west-2.amazonaws.com/escape-pod-backend:latest ..
+aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-west-2.amazonaws.com
+docker push <account-id>.dkr.ecr.us-west-2.amazonaws.com/escape-pod-backend:latest
 ```
 
 Then:

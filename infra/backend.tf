@@ -5,7 +5,7 @@ terraform {
   backend "s3" {
     bucket         = "escape-pod-backend-tfstate-REPLACE_WITH_ACCOUNT_ID"
     key            = "backend/terraform.tfstate"
-    region         = "us-east-1"
+    region         = "us-west-2"
     dynamodb_table = "escape-pod-backend-tfstate-lock"
     encrypt        = true
   }
