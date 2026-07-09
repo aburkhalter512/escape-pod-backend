@@ -24,12 +24,27 @@ call rather than folding it into the Discord-facing process.
 ```bash
 npm install
 cp .env.example .env   # fill in DATABASE_URL, TOKEN_ENCRYPTION_KEY, BOT_API_KEY
-npm run prisma:migrate  # creates the schema in prisma/schema.prisma
+npm run prisma:migrate  # applies prisma/migrations/ to your DATABASE_URL, prompts for new ones if the schema changed
 npm run dev
 ```
 
 Only discord-bot should ever call this service — every route except
 `/healthz` requires `Authorization: Bearer <BOT_API_KEY>` (see `src/auth.ts`).
+
+### Migrations
+
+Schema changes are tracked as versioned SQL files in `prisma/migrations/`,
+generated from `prisma/schema.prisma`. Two different commands, for two
+different situations:
+
+- `npm run prisma:migrate` (`prisma migrate dev`) — local development.
+  Diffs your schema against the DB, generates a new migration file for any
+  change, and applies it. Never run this against a production database —
+  it can prompt to reset the DB if it detects drift.
+- `npm run prisma:deploy` (`prisma migrate deploy`) — production/CI.
+  Applies whatever migrations exist in `prisma/migrations/` that haven't
+  run yet. Never generates new migrations or touches existing data beyond
+  what the SQL says. This is what a deploy pipeline should run.
 
 ## Status
 
