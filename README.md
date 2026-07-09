@@ -46,6 +46,16 @@ different situations:
   run yet. Never generates new migrations or touches existing data beyond
   what the SQL says. This is what a deploy pipeline should run.
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every PR:
+`npm ci` (also runs `prisma generate` via `postinstall`), typecheck,
+lint, test, build, then `npm run prisma:deploy` against a throwaway
+Postgres service container — catching a schema change that never got a
+migration, or a migration that doesn't actually apply cleanly. This
+doesn't deploy anywhere; it's the same verification you'd want before
+merging, automated.
+
 ## Status
 
 Core loop implemented and tested: account linking (§8.2-§8.3), guild
