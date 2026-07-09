@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+import { unimplemented } from './stub.js'
 import type { AppPrismaClient } from '../prismaClient.js'
 
 export interface FakePrismaOverrides {
@@ -11,22 +11,42 @@ export interface FakePrismaOverrides {
 }
 
 // Fully satisfies AppPrismaClient (every delegate/method it declares gets a
-// default vi.fn() stub), so callers never need `as unknown as PrismaClient`.
-// Pass overrides for the specific delegate methods a given test cares
-// about; everything else quietly resolves to undefined if called, same as
-// before, just without the cast.
+// default stub that throws if called), so callers never need
+// `as unknown as PrismaClient`. Pass overrides for the specific delegate
+// methods a given test cares about.
 export function createFakePrismaClient(overrides: FakePrismaOverrides = {}): AppPrismaClient {
   return {
-    organizer: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), ...overrides.organizer },
-    guildSubscription: { findMany: vi.fn(), upsert: vi.fn(), ...overrides.guildSubscription },
-    guildOrganizerAllowlist: { upsert: vi.fn(), ...overrides.guildOrganizerAllowlist },
-    podRound: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), ...overrides.podRound },
+    organizer: {
+      findMany: unimplemented('organizer.findMany'),
+      update: unimplemented('organizer.update'),
+      upsert: unimplemented('organizer.upsert'),
+      ...overrides.organizer,
+    },
+    guildSubscription: {
+      findMany: unimplemented('guildSubscription.findMany'),
+      upsert: unimplemented('guildSubscription.upsert'),
+      ...overrides.guildSubscription,
+    },
+    guildOrganizerAllowlist: {
+      upsert: unimplemented('guildOrganizerAllowlist.upsert'),
+      ...overrides.guildOrganizerAllowlist,
+    },
+    podRound: {
+      create: unimplemented('podRound.create'),
+      findUnique: unimplemented('podRound.findUnique'),
+      update: unimplemented('podRound.update'),
+      ...overrides.podRound,
+    },
     podRoundTarget: {
-      findMany: vi.fn(),
-      findUnique: vi.fn(),
-      update: vi.fn(),
+      findMany: unimplemented('podRoundTarget.findMany'),
+      findUnique: unimplemented('podRoundTarget.findUnique'),
+      update: unimplemented('podRoundTarget.update'),
       ...overrides.podRoundTarget,
     },
-    podRoundSignup: { count: vi.fn(), upsert: vi.fn(), ...overrides.podRoundSignup },
+    podRoundSignup: {
+      count: unimplemented('podRoundSignup.count'),
+      upsert: unimplemented('podRoundSignup.upsert'),
+      ...overrides.podRoundSignup,
+    },
   }
 }

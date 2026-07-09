@@ -1,20 +1,116 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import Fastify from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { zodValidatorCompiler } from '../validation.js'
-import type { PtpClient } from '../ptp/client.js'
+import type { AppPrismaClient } from '../prismaClient.js'
+import type { CreatePodParams, PtpClient } from '../ptp/client.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
 import { createFakePrismaClient, type FakePrismaOverrides } from '../testUtils/fakePrismaClient.js'
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
+import { stub } from '../testUtils/stub.js'
+import { deepEqual } from '../testUtils/deepEqual.js'
 import { registerPodRoutes } from './pods.js'
 
 const TOKEN_KEY = '00'.repeat(32) // 32-byte hex key, fine for tests
+
+type PodRoundCreateArgs = Parameters<AppPrismaClient['podRound']['create']>[0]
+type PodRoundRow = Awaited<ReturnType<AppPrismaClient['podRound']['create']>>
+type PodRoundUpdateArgs = Parameters<AppPrismaClient['podRound']['update']>[0]
+type PodRoundWithOrganizer = Prisma.PodRoundGetPayload<{ include: { organizer: true } }>
+type GuildSubscriptionFindManyArgs = Parameters<AppPrismaClient['guildSubscription']['findMany']>[0]
+type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['findMany']>>[number]
+type PodRoundTargetFindUniqueArgs = Parameters<AppPrismaClient['podRoundTarget']['findUnique']>[0]
+type PodRoundTargetRow = Awaited<ReturnType<AppPrismaClient['podRoundTarget']['update']>>
+type PodRoundTargetUpdateArgs = Parameters<AppPrismaClient['podRoundTarget']['update']>[0]
+type PodRoundTargetFindManyArgs = Parameters<AppPrismaClient['podRoundTarget']['findMany']>[0]
+type PodRoundSignupUpsertArgs = Parameters<AppPrismaClient['podRoundSignup']['upsert']>[0]
+type PodRoundSignupRow = Awaited<ReturnType<AppPrismaClient['podRoundSignup']['upsert']>>
+type PodRoundSignupCountArgs = Parameters<AppPrismaClient['podRoundSignup']['count']>[0]
+
+function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
+  return {
+    id: 'round-1',
+    organizerDiscordId: 'organizer-1',
+    setCode: 'JTL',
+    threshold: 8,
+    status: 'COLLECTING',
+    ptpPodShareId: null,
+    createdAt: new Date(),
+    ...overrides,
+  }
+}
+
+function fakeRoundWithOrganizer(overrides: Partial<PodRoundWithOrganizer> = {}): PodRoundWithOrganizer {
+  return {
+    ...fakePodRoundRow(),
+    organizer: {
+      discordId: 'organizer-1',
+      username: 'OrganizerOne',
+      encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
+      expiresAt: new Date(),
+      linkedAt: new Date(),
+    },
+    ...overrides,
+  }
+}
+
+function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {}): GuildSubscriptionRow {
+  return {
+    guildId: 'g1',
+    installedByDiscordId: 'admin-1',
+    broadcastChannelId: 'channel-1',
+    postingPolicy: 'ALLOWLIST',
+    installedAt: new Date(),
+    ...overrides,
+  }
+}
+
+function fakePodRoundTargetRow(overrides: Partial<PodRoundTargetRow> = {}): PodRoundTargetRow {
+  return {
+    podRoundId: 'round-1',
+    guildId: 'g1',
+    channelId: 'channel-1',
+    messageId: null,
+    approvalStatus: null,
+    postedAt: new Date(),
+    ...overrides,
+  }
+}
+
+function fakePodRoundSignupRow(overrides: Partial<PodRoundSignupRow> = {}): PodRoundSignupRow {
+  return {
+    podRoundId: 'round-1',
+    discordId: 'player-1',
+    usernameSnapshot: 'PlayerOne',
+    sourceGuildId: 'guild-1',
+    status: 'IN',
+    signedUpAt: new Date(),
+    ...overrides,
+  }
+}
+
+// podRound.findUnique is called both with and without `include: {organizer:
+// true}` (see routes/pods.ts), so AppPrismaClient keeps it generic like
+// Prisma's own method. A concrete stub can't be assigned directly to a
+// generic method slot, so this wraps one in a thin adapter — the one
+// deliberate cast in this file, isolated to bridging that gap.
+function stubPodRoundFindUnique<Result>(impl: () => Promise<Result>) {
+  const calls: Prisma.PodRoundFindUniqueArgs[] = []
+  const fn = async (args: Prisma.PodRoundFindUniqueArgs) => {
+    calls.push(args)
+    return impl()
+  }
+  return Object.assign(fn, { calls }) as unknown as AppPrismaClient['podRound']['findUnique'] & {
+    calls: Prisma.PodRoundFindUniqueArgs[]
+  }
+}
 
 function buildApp(overrides: { prisma?: FakePrismaOverrides; ptp?: Partial<PtpClient> } = {}) {
   const app = Fastify()
   app.setValidatorCompiler(zodValidatorCompiler)
   const prisma = createFakePrismaClient({
-    podRoundTarget: { findMany: vi.fn().mockResolvedValue([]) },
-    guildSubscription: { findMany: vi.fn().mockResolvedValue([]) },
+    podRoundTarget: { findMany: stub(async (_args: PodRoundTargetFindManyArgs) => []) },
+    guildSubscription: { findMany: stub(async (_args: GuildSubscriptionFindManyArgs) => []) },
     ...overrides.prisma,
   })
   const ptp = createFakePtpClient(overrides.ptp)
@@ -23,33 +119,30 @@ function buildApp(overrides: { prisma?: FakePrismaOverrides; ptp?: Partial<PtpCl
   return { app, prisma, ptp }
 }
 
-function fakeRound(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 'round-1',
-    organizerDiscordId: 'organizer-1',
-    setCode: 'JTL',
-    threshold: 8,
-    status: 'COLLECTING',
-    organizer: { discordId: 'organizer-1', encryptedToken: encryptToken('a-real-token', TOKEN_KEY) },
-    ...overrides,
-  }
-}
-
 describe('POST /pods/start', () => {
-  function subscriptions() {
-    return [
-      { guildId: 'g1', broadcastChannelId: 'channel-1' },
-      { guildId: 'g2', broadcastChannelId: 'channel-2' },
-    ]
-  }
-
-  it('resolves each target guild\'s broadcast channel and returns it alongside the round id', async () => {
-    const { app, prisma } = buildApp({
-      prisma: {
-        podRound: { create: vi.fn().mockResolvedValue({ id: 'round-1' }) },
-        guildSubscription: { findMany: vi.fn().mockResolvedValue(subscriptions()) },
-      },
+  it("resolves each target guild's broadcast channel and returns it alongside the round id", async () => {
+    const create = stub(async (args: PodRoundCreateArgs) => {
+      const expected: PodRoundCreateArgs = {
+        data: {
+          organizerDiscordId: 'organizer-1',
+          setCode: 'JTL',
+          threshold: 8,
+          targets: {
+            create: [
+              { guildId: 'g1', channelId: 'channel-1' },
+              { guildId: 'g2', channelId: 'channel-2' },
+            ],
+          },
+        },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.create args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow()
     })
+    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [
+      fakeGuildSubscriptionRow({ guildId: 'g1', broadcastChannelId: 'channel-1' }),
+      fakeGuildSubscriptionRow({ guildId: 'g2', broadcastChannelId: 'channel-2' }),
+    ])
+    const { app } = buildApp({ prisma: { podRound: { create }, guildSubscription: { findMany } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -62,27 +155,16 @@ describe('POST /pods/start', () => {
       podRoundId: 'round-1',
       targets: [{ guildId: 'g1', channelId: 'channel-1' }, { guildId: 'g2', channelId: 'channel-2' }],
     })
-    expect(prisma.podRound.create).toHaveBeenCalledWith({
-      data: {
-        organizerDiscordId: 'organizer-1',
-        setCode: 'JTL',
-        threshold: 8,
-        targets: {
-          create: [{ guildId: 'g1', channelId: 'channel-1' }, { guildId: 'g2', channelId: 'channel-2' }],
-        },
-      },
-    })
   })
 
   it('silently drops a guildId whose subscription no longer exists rather than failing the whole round', async () => {
     // e.g. a guild unsubscribed between /start-pod's eligibility check and
     // this call — a stale target shouldn't block starting the round.
-    const { app } = buildApp({
-      prisma: {
-        podRound: { create: vi.fn().mockResolvedValue({ id: 'round-1' }) },
-        guildSubscription: { findMany: vi.fn().mockResolvedValue([subscriptions()[0]]) },
-      },
-    })
+    const create = stub(async (_args: PodRoundCreateArgs) => fakePodRoundRow())
+    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [
+      fakeGuildSubscriptionRow({ guildId: 'g1', broadcastChannelId: 'channel-1' }),
+    ])
+    const { app } = buildApp({ prisma: { podRound: { create }, guildSubscription: { findMany } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -94,7 +176,8 @@ describe('POST /pods/start', () => {
   })
 
   it('handles an empty guildIds list without erroring', async () => {
-    const { app } = buildApp({ prisma: { podRound: { create: vi.fn().mockResolvedValue({ id: 'round-1' }) } } })
+    const create = stub(async (_args: PodRoundCreateArgs) => fakePodRoundRow())
+    const { app } = buildApp({ prisma: { podRound: { create } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -115,14 +198,15 @@ describe('POST /pods/start', () => {
     }
 
     it('rejects a missing required field with 400, before touching prisma', async () => {
-      const { app, prisma } = buildApp()
+      const create = stub(async (_args: PodRoundCreateArgs) => fakePodRoundRow())
+      const { app } = buildApp({ prisma: { podRound: { create } } })
       const { guildIds, ...withoutGuildIds } = validPayload
       void guildIds
 
       const response = await app.inject({ method: 'POST', url: '/pods/start', payload: withoutGuildIds })
 
       expect(response.statusCode).toBe(400)
-      expect(prisma.podRound.create).not.toHaveBeenCalled()
+      expect(create.calls).toHaveLength(0)
     })
 
     it.each([5, 9, 0, -1])('rejects a threshold outside the 6-8 range (%i)', async (threshold) => {
@@ -177,14 +261,18 @@ describe('POST /pods/start', () => {
 
 describe('POST /pods/:id/targets/:guildId/message', () => {
   it('records the messageId on the matching target', async () => {
-    const { app, prisma } = buildApp({
-      prisma: {
-        podRoundTarget: {
-          findUnique: vi.fn().mockResolvedValue({ podRoundId: 'round-1', guildId: 'g1' }),
-          update: vi.fn(),
-        },
-      },
+    const findUnique = stub(async (_args: PodRoundTargetFindUniqueArgs) =>
+      fakePodRoundTargetRow({ podRoundId: 'round-1', guildId: 'g1' })
+    )
+    const update = stub(async (args: PodRoundTargetUpdateArgs) => {
+      const expected: PodRoundTargetUpdateArgs = {
+        where: { podRoundId_guildId: { podRoundId: 'round-1', guildId: 'g1' } },
+        data: { messageId: 'msg-1' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      return fakePodRoundTargetRow()
     })
+    const { app } = buildApp({ prisma: { podRoundTarget: { findUnique, update } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -193,16 +281,12 @@ describe('POST /pods/:id/targets/:guildId/message', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(prisma.podRoundTarget.update).toHaveBeenCalledWith({
-      where: { podRoundId_guildId: { podRoundId: 'round-1', guildId: 'g1' } },
-      data: { messageId: 'msg-1' },
-    })
   })
 
   it('returns 404 when there is no target for that round/guild pair', async () => {
-    const { app, prisma } = buildApp({
-      prisma: { podRoundTarget: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } },
-    })
+    const findUnique = stub(async (_args: PodRoundTargetFindUniqueArgs) => null)
+    const update = stub(async (_args: PodRoundTargetUpdateArgs) => fakePodRoundTargetRow())
+    const { app } = buildApp({ prisma: { podRoundTarget: { findUnique, update } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -211,15 +295,15 @@ describe('POST /pods/:id/targets/:guildId/message', () => {
     })
 
     expect(response.statusCode).toBe(404)
-    expect(prisma.podRoundTarget.update).not.toHaveBeenCalled()
+    expect(update.calls).toHaveLength(0)
   })
 
   it('rejects an empty-string messageId with 400 rather than storing it', async () => {
-    const { app, prisma } = buildApp({
-      prisma: {
-        podRoundTarget: { findUnique: vi.fn().mockResolvedValue({ podRoundId: 'round-1', guildId: 'g1' }), update: vi.fn() },
-      },
-    })
+    const findUnique = stub(async (_args: PodRoundTargetFindUniqueArgs) =>
+      fakePodRoundTargetRow({ podRoundId: 'round-1', guildId: 'g1' })
+    )
+    const update = stub(async (_args: PodRoundTargetUpdateArgs) => fakePodRoundTargetRow())
+    const { app } = buildApp({ prisma: { podRoundTarget: { findUnique, update } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -228,13 +312,14 @@ describe('POST /pods/:id/targets/:guildId/message', () => {
     })
 
     expect(response.statusCode).toBe(400)
-    expect(prisma.podRoundTarget.update).not.toHaveBeenCalled()
+    expect(update.calls).toHaveLength(0)
   })
 })
 
 describe('POST /pods/:id/signup', () => {
   it('returns 404 when the round does not exist', async () => {
-    const { app } = buildApp({ prisma: { podRound: { findUnique: vi.fn().mockResolvedValue(null) } } })
+    const findUnique = stubPodRoundFindUnique(async () => null)
+    const { app } = buildApp({ prisma: { podRound: { findUnique } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -246,11 +331,29 @@ describe('POST /pods/:id/signup', () => {
   })
 
   it('records the signup and reports the count without creating a pod when below threshold', async () => {
-    const { app, prisma, ptp } = buildApp({
-      prisma: {
-        podRound: { findUnique: vi.fn().mockResolvedValue(fakeRound()) },
-        podRoundSignup: { upsert: vi.fn(), count: vi.fn().mockResolvedValue(5) },
-      },
+    const findUnique = stubPodRoundFindUnique(async () => fakeRoundWithOrganizer())
+    const upsert = stub(async (args: PodRoundSignupUpsertArgs) => {
+      const expected: PodRoundSignupUpsertArgs = {
+        where: { podRoundId_discordId: { podRoundId: 'round-1', discordId: 'player-1' } },
+        create: {
+          podRoundId: 'round-1',
+          discordId: 'player-1',
+          usernameSnapshot: 'PlayerOne',
+          sourceGuildId: 'guild-1',
+          status: 'IN',
+        },
+        update: { status: 'IN' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected signup upsert args: ${JSON.stringify(args)}`)
+      return fakePodRoundSignupRow()
+    })
+    const count = stub(async (_args: PodRoundSignupCountArgs) => 5)
+    const createPod = stub(async (_token: string, _params: CreatePodParams) => {
+      throw new Error('createPod should not have been called below threshold')
+    })
+    const { app } = buildApp({
+      prisma: { podRound: { findUnique }, podRoundSignup: { upsert, count } },
+      ptp: { createPod },
     })
 
     const response = await app.inject({
@@ -267,34 +370,41 @@ describe('POST /pods/:id/signup', () => {
       podCreated: false,
       targets: [],
     })
-    expect(prisma.podRoundSignup.upsert).toHaveBeenCalledWith({
-      where: { podRoundId_discordId: { podRoundId: 'round-1', discordId: 'player-1' } },
-      create: { podRoundId: 'round-1', discordId: 'player-1', usernameSnapshot: 'PlayerOne', sourceGuildId: 'guild-1', status: 'IN' },
-      update: { status: 'IN' },
-    })
-    expect(ptp.createPod).not.toHaveBeenCalled()
+    expect(createPod.calls).toHaveLength(0)
   })
 
   it('creates the PTP pod once the signup pushes the count to threshold, and returns every target for cross-guild sync', async () => {
-    const round = fakeRound()
+    const round = fakeRoundWithOrganizer()
     const targetRows = [
-      { guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1' },
-      { guildId: 'g2', channelId: 'channel-2', messageId: null },
+      fakePodRoundTargetRow({ guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1' }),
+      fakePodRoundTargetRow({ guildId: 'g2', channelId: 'channel-2', messageId: null }),
     ]
-    const { app, prisma, ptp } = buildApp({
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'POD_CREATED', ptpPodShareId: 'share-1' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow()
+    })
+    const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
+    const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
+    const findManyTargets = stub(async (_args: PodRoundTargetFindManyArgs) => targetRows)
+    const createPod = stub(async (token: string, params: CreatePodParams) => {
+      const validArgs = token === 'a-real-token' && deepEqual(params, { setCode: 'JTL', maxPlayers: 8 })
+      if (!validArgs) throw new Error(`unexpected createPod args: ${token} ${JSON.stringify(params)}`)
+      return {
+        id: 'ptp-pod-1',
+        shareId: 'share-1',
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        createdAt: '2026-01-01T00:00:00Z',
+      }
+    })
+    const { app } = buildApp({
       prisma: {
-        podRound: { findUnique: vi.fn().mockResolvedValue(round), update: vi.fn() },
-        podRoundSignup: { upsert: vi.fn(), count: vi.fn().mockResolvedValue(8) },
-        podRoundTarget: { findMany: vi.fn().mockResolvedValue(targetRows) },
+        podRound: { findUnique, update },
+        podRoundSignup: { upsert, count },
+        podRoundTarget: { findMany: findManyTargets },
       },
-      ptp: {
-        createPod: vi.fn().mockResolvedValue({
-          id: 'ptp-pod-1',
-          shareId: 'share-1',
-          shareUrl: 'https://www.protectthepod.com/draft/share-1',
-          createdAt: '2026-01-01T00:00:00Z',
-        }),
-      },
+      ptp: { createPod },
     })
 
     const response = await app.inject({
@@ -303,11 +413,6 @@ describe('POST /pods/:id/signup', () => {
       payload: { discordId: 'player-8', username: 'PlayerEight', sourceGuildId: 'guild-1' },
     })
 
-    expect(ptp.createPod).toHaveBeenCalledWith('a-real-token', { setCode: 'JTL', maxPlayers: 8 })
-    expect(prisma.podRound.update).toHaveBeenCalledWith({
-      where: { id: 'round-1' },
-      data: { status: 'POD_CREATED', ptpPodShareId: 'share-1' },
-    })
     expect(response.json()).toEqual({
       count: 8,
       threshold: 8,
@@ -315,18 +420,26 @@ describe('POST /pods/:id/signup', () => {
       thresholdReached: true,
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
-      targets: targetRows,
+      targets: targetRows.map((t) => ({ guildId: t.guildId, channelId: t.channelId, messageId: t.messageId })),
     })
   })
 
   it('marks the round THRESHOLD_REACHED (not an error response) when PTP pod creation fails after threshold is hit', async () => {
-    const round = fakeRound()
-    const { app, prisma, ptp } = buildApp({
-      prisma: {
-        podRound: { findUnique: vi.fn().mockResolvedValue(round), update: vi.fn() },
-        podRoundSignup: { upsert: vi.fn(), count: vi.fn().mockResolvedValue(8) },
-      },
-      ptp: { createPod: vi.fn().mockRejectedValue(new Error('PTP pod creation failed: 401')) },
+    const round = fakeRoundWithOrganizer()
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'THRESHOLD_REACHED' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow()
+    })
+    const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
+    const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
+    const createPod = stub(async (_token: string, _params: CreatePodParams) => {
+      throw new Error('PTP pod creation failed: 401')
+    })
+    const { app } = buildApp({
+      prisma: { podRound: { findUnique, update }, podRoundSignup: { upsert, count } },
+      ptp: { createPod },
     })
 
     const response = await app.inject({
@@ -341,20 +454,23 @@ describe('POST /pods/:id/signup', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ thresholdReached: true, podCreated: false })
     expect(response.json().shareUrl).toBeUndefined()
-    expect(prisma.podRound.update).toHaveBeenCalledWith({
-      where: { id: 'round-1' },
-      data: { status: 'THRESHOLD_REACHED' },
-    })
   })
 
   it('does not re-trigger PTP pod creation for a round that already reached POD_CREATED', async () => {
     // e.g. a player leaving and re-joining after the pod already exists.
-    const round = fakeRound({ status: 'POD_CREATED' })
-    const { prisma, ptp, app } = buildApp({
-      prisma: {
-        podRound: { findUnique: vi.fn().mockResolvedValue(round), update: vi.fn() },
-        podRoundSignup: { upsert: vi.fn(), count: vi.fn().mockResolvedValue(8) },
-      },
+    const round = fakeRoundWithOrganizer({ status: 'POD_CREATED' })
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const update = stub(async (_args: PodRoundUpdateArgs) => {
+      throw new Error('podRound.update should not have been called')
+    })
+    const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
+    const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
+    const createPod = stub(async (_token: string, _params: CreatePodParams) => {
+      throw new Error('createPod should not have been called')
+    })
+    const { app } = buildApp({
+      prisma: { podRound: { findUnique, update }, podRoundSignup: { upsert, count } },
+      ptp: { createPod },
     })
 
     const response = await app.inject({
@@ -363,13 +479,16 @@ describe('POST /pods/:id/signup', () => {
       payload: { discordId: 'player-9', username: 'PlayerNine', sourceGuildId: 'guild-1' },
     })
 
-    expect(ptp.createPod).not.toHaveBeenCalled()
-    expect(prisma.podRound.update).not.toHaveBeenCalled()
+    expect(createPod.calls).toHaveLength(0)
+    expect(update.calls).toHaveLength(0)
     expect(response.json()).toMatchObject({ thresholdReached: true, podCreated: false })
   })
 
   it('rejects a signup body missing a required field with 400, before reading the round', async () => {
-    const { app, prisma } = buildApp()
+    const findUnique = stubPodRoundFindUnique(async () => {
+      throw new Error('podRound.findUnique should not have been called')
+    })
+    const { app } = buildApp({ prisma: { podRound: { findUnique } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -378,13 +497,14 @@ describe('POST /pods/:id/signup', () => {
     })
 
     expect(response.statusCode).toBe(400)
-    expect(prisma.podRound.findUnique).not.toHaveBeenCalled()
+    expect(findUnique.calls).toHaveLength(0)
   })
 })
 
 describe('POST /pods/:id/cancel', () => {
   it('returns 404 when the round does not exist', async () => {
-    const { app } = buildApp({ prisma: { podRound: { findUnique: vi.fn().mockResolvedValue(null) } } })
+    const findUnique = stubPodRoundFindUnique(async () => null)
+    const { app } = buildApp({ prisma: { podRound: { findUnique } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -395,10 +515,12 @@ describe('POST /pods/:id/cancel', () => {
     expect(response.statusCode).toBe(404)
   })
 
-  it('returns 403 when the requester is not the round\'s organizer', async () => {
-    const { app, prisma } = buildApp({
-      prisma: { podRound: { findUnique: vi.fn().mockResolvedValue(fakeRound()), update: vi.fn() } },
+  it("returns 403 when the requester is not the round's organizer", async () => {
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow())
+    const update = stub(async (_args: PodRoundUpdateArgs) => {
+      throw new Error('podRound.update should not have been called')
     })
+    const { app } = buildApp({ prisma: { podRound: { findUnique, update } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -407,13 +529,17 @@ describe('POST /pods/:id/cancel', () => {
     })
 
     expect(response.statusCode).toBe(403)
-    expect(prisma.podRound.update).not.toHaveBeenCalled()
+    expect(update.calls).toHaveLength(0)
   })
 
   it('cancels the round when the requester is the organizer', async () => {
-    const { app, prisma } = buildApp({
-      prisma: { podRound: { findUnique: vi.fn().mockResolvedValue(fakeRound()), update: vi.fn() } },
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow())
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'CANCELLED' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow()
     })
+    const { app } = buildApp({ prisma: { podRound: { findUnique, update } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -422,18 +548,17 @@ describe('POST /pods/:id/cancel', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(prisma.podRound.update).toHaveBeenCalledWith({
-      where: { id: 'round-1' },
-      data: { status: 'CANCELLED' },
-    })
   })
 
   it('rejects a missing requestedBy with 400, before reading the round', async () => {
-    const { app, prisma } = buildApp()
+    const findUnique = stubPodRoundFindUnique(async () => {
+      throw new Error('podRound.findUnique should not have been called')
+    })
+    const { app } = buildApp({ prisma: { podRound: { findUnique } } })
 
     const response = await app.inject({ method: 'POST', url: '/pods/round-1/cancel', payload: {} })
 
     expect(response.statusCode).toBe(400)
-    expect(prisma.podRound.findUnique).not.toHaveBeenCalled()
+    expect(findUnique.calls).toHaveLength(0)
   })
 })

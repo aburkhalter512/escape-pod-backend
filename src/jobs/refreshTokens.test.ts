@@ -1,30 +1,43 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { encryptToken, decryptToken } from '../crypto/tokenCrypto.js'
+import type { AppPrismaClient } from '../prismaClient.js'
 import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
+import { stub } from '../testUtils/stub.js'
 import { refreshExpiringTokens } from './refreshTokens.js'
 
 const TOKEN_KEY = '00'.repeat(32)
+
+type OrganizerFindManyArgs = Parameters<AppPrismaClient['organizer']['findMany']>[0]
+type OrganizerRow = Awaited<ReturnType<AppPrismaClient['organizer']['findMany']>>[number]
+type OrganizerUpdateArgs = Parameters<AppPrismaClient['organizer']['update']>[0]
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
   return `${encode({ alg: 'HS256' })}.${encode(payload)}.sig`
 }
 
-function fakeOrganizer(discordId: string, token: string) {
-  return { discordId, username: 'PlayerOne', encryptedToken: encryptToken(token, TOKEN_KEY), expiresAt: new Date() }
+function fakeOrganizer(discordId: string, token: string): OrganizerRow {
+  return {
+    discordId,
+    username: 'PlayerOne',
+    encryptedToken: encryptToken(token, TOKEN_KEY),
+    expiresAt: new Date(),
+    linkedAt: new Date(),
+  }
 }
 
 describe('refreshExpiringTokens', () => {
   it('queries for organizers expiring within the refresh window, not all organizers', async () => {
-    const findMany = vi.fn().mockResolvedValue([])
+    const findMany = stub(async (_args: OrganizerFindManyArgs) => [])
     const prisma = createFakePrismaClient({ organizer: { findMany } })
     const ptp = createFakePtpClient()
 
     await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
-    expect(findMany).toHaveBeenCalledWith({ where: { expiresAt: { lt: expect.any(Date) } } })
-    const cutoff = findMany.mock.calls[0][0].where.expiresAt.lt as Date
+    const expiresAtFilter = findMany.calls[0][0]?.where?.expiresAt
+    const cutoff = (expiresAtFilter as { lt?: Date } | undefined)?.lt as Date
+    expect(cutoff).toBeInstanceOf(Date)
     const daysFromNow = (cutoff.getTime() - Date.now()) / (24 * 60 * 60 * 1000)
     expect(daysFromNow).toBeGreaterThan(4.9)
     expect(daysFromNow).toBeLessThan(5.1)
@@ -36,19 +49,25 @@ describe('refreshExpiringTokens', () => {
     const newToken = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: newExp })
     const organizer = fakeOrganizer('user-1', oldToken)
 
-    const update = vi.fn()
-    const prisma = createFakePrismaClient({ organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update } })
-    const ptp = createFakePtpClient({ refreshToken: vi.fn().mockResolvedValue(newToken) })
+    const update = stub(async (args: OrganizerUpdateArgs) => {
+      const ciphertext = args.data.encryptedToken
+      if (typeof ciphertext !== 'string' || decryptToken(ciphertext, TOKEN_KEY) !== newToken) {
+        throw new Error(`unexpected encryptedToken in organizer.update: ${JSON.stringify(args)}`)
+      }
+      if (!(args.data.expiresAt instanceof Date) || args.data.expiresAt.getTime() !== newExp * 1000) {
+        throw new Error(`unexpected expiresAt in organizer.update: ${JSON.stringify(args)}`)
+      }
+      return organizer
+    })
+    const prisma = createFakePrismaClient({
+      organizer: { findMany: stub(async (_args: OrganizerFindManyArgs) => [organizer]), update },
+    })
+    const refreshToken = stub(async (token: string) => (token === oldToken ? newToken : null))
+    const ptp = createFakePtpClient({ refreshToken })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
-    expect(ptp.refreshToken).toHaveBeenCalledWith(oldToken)
-    expect(update).toHaveBeenCalledWith({
-      where: { discordId: 'user-1' },
-      data: { encryptedToken: expect.any(String), expiresAt: new Date(newExp * 1000) },
-    })
-    const storedCiphertext = update.mock.calls[0][0].data.encryptedToken
-    expect(decryptToken(storedCiphertext, TOKEN_KEY)).toBe(newToken)
+    expect(update.calls).toHaveLength(1)
     expect(result).toEqual({ refreshed: 1, failed: 0, checked: 1 })
   })
 
@@ -56,13 +75,17 @@ describe('refreshExpiringTokens', () => {
     const oldToken = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: 1000 })
     const organizer = fakeOrganizer('user-1', oldToken)
 
-    const update = vi.fn()
-    const prisma = createFakePrismaClient({ organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update } })
-    const ptp = createFakePtpClient({ refreshToken: vi.fn().mockResolvedValue(null) })
+    const update = stub(async (_args: OrganizerUpdateArgs) => {
+      throw new Error('organizer.update should not have been called')
+    })
+    const prisma = createFakePrismaClient({
+      organizer: { findMany: stub(async (_args: OrganizerFindManyArgs) => [organizer]), update },
+    })
+    const ptp = createFakePtpClient({ refreshToken: stub(async (_token: string) => null) })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
-    expect(update).not.toHaveBeenCalled()
+    expect(update.calls).toHaveLength(0)
     expect(result).toEqual({ refreshed: 0, failed: 1, checked: 1 })
   })
 
@@ -70,13 +93,17 @@ describe('refreshExpiringTokens', () => {
     const oldToken = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: 1000 })
     const organizer = fakeOrganizer('user-1', oldToken)
 
-    const update = vi.fn()
-    const prisma = createFakePrismaClient({ organizer: { findMany: vi.fn().mockResolvedValue([organizer]), update } })
-    const ptp = createFakePtpClient({ refreshToken: vi.fn().mockResolvedValue('not-a-valid-jwt') })
+    const update = stub(async (_args: OrganizerUpdateArgs) => {
+      throw new Error('organizer.update should not have been called')
+    })
+    const prisma = createFakePrismaClient({
+      organizer: { findMany: stub(async (_args: OrganizerFindManyArgs) => [organizer]), update },
+    })
+    const ptp = createFakePtpClient({ refreshToken: stub(async (_token: string) => 'not-a-valid-jwt') })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
-    expect(update).not.toHaveBeenCalled()
+    expect(update.calls).toHaveLength(0)
     expect(result).toEqual({ refreshed: 0, failed: 1, checked: 1 })
   })
 
@@ -91,10 +118,13 @@ describe('refreshExpiringTokens', () => {
 
     const organizers = [fakeOrganizer('user-1', successToken), fakeOrganizer('user-2', failToken)]
     const prisma = createFakePrismaClient({
-      organizer: { findMany: vi.fn().mockResolvedValue(organizers), update: vi.fn() },
+      organizer: {
+        findMany: stub(async (_args: OrganizerFindManyArgs) => organizers),
+        update: stub(async (_args: OrganizerUpdateArgs) => organizers[0]),
+      },
     })
     const ptp = createFakePtpClient({
-      refreshToken: vi.fn(async (token: string) => (token === successToken ? refreshedToken : null)),
+      refreshToken: stub(async (token: string) => (token === successToken ? refreshedToken : null)),
     })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
@@ -103,12 +133,15 @@ describe('refreshExpiringTokens', () => {
   })
 
   it('returns all-zero counts when nothing is expiring soon', async () => {
-    const prisma = createFakePrismaClient({ organizer: { findMany: vi.fn().mockResolvedValue([]) } })
-    const ptp = createFakePtpClient()
+    const prisma = createFakePrismaClient({ organizer: { findMany: stub(async (_args: OrganizerFindManyArgs) => []) } })
+    const refreshToken = stub(async (_token: string) => {
+      throw new Error('refreshToken should not have been called')
+    })
+    const ptp = createFakePtpClient({ refreshToken })
 
     const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
 
     expect(result).toEqual({ refreshed: 0, failed: 0, checked: 0 })
-    expect(ptp.refreshToken).not.toHaveBeenCalled()
+    expect(refreshToken.calls).toHaveLength(0)
   })
 })

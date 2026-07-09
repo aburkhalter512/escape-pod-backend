@@ -1,17 +1,48 @@
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 
-// The contract routes/jobs actually depend on — derived via Pick from
-// Prisma's own generated types, not hand-duplicated, so argument/return
-// shapes stay perfectly in sync with prisma/schema.prisma with zero drift
-// risk. Narrower than PrismaClient on purpose: a hand-written test stub
-// (testUtils/fakePrismaClient.ts) can fully satisfy this interface with no
-// `as unknown as` cast, because it only has to implement the dozen methods
-// our code actually calls instead of Prisma's entire generated surface.
+// Prisma's generated delegate methods are generic and return a chainable
+// `PrismaPromise`, not a plain `Promise` — great for real usage, but that
+// shape can't be satisfied by a hand-written test stub without falling
+// back to a mocking library's untyped `vi.fn()`. This flattens each method
+// to a plain (args) => Promise<result> signature, with the argument/return
+// *types* still derived from Prisma's generated types (via Parameters/
+// ReturnType) so they stay in sync with prisma/schema.prisma with zero
+// hand-duplication — only the generic/chainable machinery is stripped.
+// Real PrismaClient instances still satisfy this structurally with no cast
+// (see server.ts); testUtils/fakePrismaClient.ts hand-satisfies it too.
+type Method<M extends (...args: never[]) => unknown> = (args: Parameters<M>[0]) => Promise<Awaited<ReturnType<M>>>
+
 export interface AppPrismaClient {
-  organizer: Pick<PrismaClient['organizer'], 'findMany' | 'update' | 'upsert'>
-  guildSubscription: Pick<PrismaClient['guildSubscription'], 'findMany' | 'upsert'>
-  guildOrganizerAllowlist: Pick<PrismaClient['guildOrganizerAllowlist'], 'upsert'>
-  podRound: Pick<PrismaClient['podRound'], 'create' | 'findUnique' | 'update'>
-  podRoundTarget: Pick<PrismaClient['podRoundTarget'], 'findMany' | 'findUnique' | 'update'>
-  podRoundSignup: Pick<PrismaClient['podRoundSignup'], 'count' | 'upsert'>
+  organizer: {
+    findMany: Method<PrismaClient['organizer']['findMany']>
+    update: Method<PrismaClient['organizer']['update']>
+    upsert: Method<PrismaClient['organizer']['upsert']>
+  }
+  guildSubscription: {
+    findMany: Method<PrismaClient['guildSubscription']['findMany']>
+    upsert: Method<PrismaClient['guildSubscription']['upsert']>
+  }
+  guildOrganizerAllowlist: {
+    upsert: Method<PrismaClient['guildOrganizerAllowlist']['upsert']>
+  }
+  podRound: {
+    create: Method<PrismaClient['podRound']['create']>
+    // Called both with and without `include: { organizer: true }` (see
+    // routes/pods.ts), so unlike the other methods here this one stays
+    // generic per call — same as Prisma's own signature — instead of
+    // collapsing to one fixed return shape.
+    findUnique<T extends Prisma.PodRoundFindUniqueArgs>(
+      args: Prisma.SelectSubset<T, Prisma.PodRoundFindUniqueArgs>
+    ): Promise<Prisma.PodRoundGetPayload<T> | null>
+    update: Method<PrismaClient['podRound']['update']>
+  }
+  podRoundTarget: {
+    findMany: Method<PrismaClient['podRoundTarget']['findMany']>
+    findUnique: Method<PrismaClient['podRoundTarget']['findUnique']>
+    update: Method<PrismaClient['podRoundTarget']['update']>
+  }
+  podRoundSignup: {
+    count: Method<PrismaClient['podRoundSignup']['count']>
+    upsert: Method<PrismaClient['podRoundSignup']['upsert']>
+  }
 }
