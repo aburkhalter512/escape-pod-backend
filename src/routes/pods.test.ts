@@ -330,7 +330,7 @@ describe('POST /pods/:id/signup', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/pods/round-1/signup',
-      payload: { discordId: 'player-1', username: 'PlayerOne', sourceGuildId: 'guild-1' },
+      payload: { discordId: 'player-1', username: 'PlayerOne', sourceGuildId: 'guild-1', action: 'in' },
     })
 
     expect(response.statusCode).toBe(404)
@@ -365,7 +365,7 @@ describe('POST /pods/:id/signup', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/pods/round-1/signup',
-      payload: { discordId: 'player-1', username: 'PlayerOne', sourceGuildId: 'guild-1' },
+      payload: { discordId: 'player-1', username: 'PlayerOne', sourceGuildId: 'guild-1', action: 'in' },
     })
 
     expect(response.json()).toEqual({
@@ -376,6 +376,41 @@ describe('POST /pods/:id/signup', () => {
       podCreated: false,
       targets: [],
     })
+  })
+
+  it('records status: LEFT (not IN) when the action is leave, so it drops out of the threshold count', async () => {
+    const findUnique = stubPodRoundFindUnique(async () => fakeRoundWithOrganizer())
+    const upsert = stub(async (args: PodRoundSignupUpsertArgs) => {
+      const expected: PodRoundSignupUpsertArgs = {
+        where: { podRoundId_discordId: { podRoundId: 'round-1', discordId: 'player-1' } },
+        create: {
+          podRoundId: 'round-1',
+          discordId: 'player-1',
+          usernameSnapshot: 'PlayerOne',
+          sourceGuildId: 'guild-1',
+          status: 'LEFT',
+        },
+        update: { status: 'LEFT' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected signup upsert args: ${JSON.stringify(args)}`)
+      return fakePodRoundSignupRow({ status: 'LEFT' })
+    })
+    // podRoundSignup.count already filters `status: 'IN'` in production
+    // code (unchanged by this fix) — a player whose upsert just wrote
+    // LEFT is excluded from the next count query for real, in Postgres.
+    // This test proves the write side; the read side is covered by the
+    // "below threshold" test above using the same count() filter.
+    const count = stub(async (_args: PodRoundSignupCountArgs) => 4)
+    const { app } = buildApp({ prisma: { podRound: { findUnique }, podRoundSignup: { upsert, count } } })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/pods/round-1/signup',
+      payload: { discordId: 'player-1', username: 'PlayerOne', sourceGuildId: 'guild-1', action: 'leave' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ count: 4, thresholdReached: false })
   })
 
   it('creates the PTP pod once the signup pushes the count to threshold, and returns every target for cross-guild sync', async () => {
@@ -423,7 +458,7 @@ describe('POST /pods/:id/signup', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/pods/round-1/signup',
-      payload: { discordId: 'player-8', username: 'PlayerEight', sourceGuildId: 'guild-1' },
+      payload: { discordId: 'player-8', username: 'PlayerEight', sourceGuildId: 'guild-1', action: 'in' },
     })
 
     expect(response.json()).toEqual({
@@ -477,12 +512,12 @@ describe('POST /pods/:id/signup', () => {
       app.inject({
         method: 'POST',
         url: '/pods/round-1/signup',
-        payload: { discordId: 'player-7', username: 'PlayerSeven', sourceGuildId: 'guild-1' },
+        payload: { discordId: 'player-7', username: 'PlayerSeven', sourceGuildId: 'guild-1', action: 'in' },
       }),
       app.inject({
         method: 'POST',
         url: '/pods/round-1/signup',
-        payload: { discordId: 'player-8', username: 'PlayerEight', sourceGuildId: 'guild-1' },
+        payload: { discordId: 'player-8', username: 'PlayerEight', sourceGuildId: 'guild-1', action: 'in' },
       }),
     ])
 
@@ -526,7 +561,7 @@ describe('POST /pods/:id/signup', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/pods/round-1/signup',
-      payload: { discordId: 'player-8', username: 'PlayerEight', sourceGuildId: 'guild-1' },
+      payload: { discordId: 'player-8', username: 'PlayerEight', sourceGuildId: 'guild-1', action: 'in' },
     })
 
     // The signup itself still succeeds from the player's point of view —
@@ -557,7 +592,7 @@ describe('POST /pods/:id/signup', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/pods/round-1/signup',
-      payload: { discordId: 'player-9', username: 'PlayerNine', sourceGuildId: 'guild-1' },
+      payload: { discordId: 'player-9', username: 'PlayerNine', sourceGuildId: 'guild-1', action: 'in' },
     })
 
     expect(response.json()).toMatchObject({ thresholdReached: true, podCreated: false })

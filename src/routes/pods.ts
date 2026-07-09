@@ -39,6 +39,7 @@ const signupBodySchema = z.object({
   discordId: z.string().min(1),
   username: z.string().min(1),
   sourceGuildId: z.string().min(1),
+  action: z.enum(['in', 'leave']),
 })
 type SignupBody = z.infer<typeof signupBodySchema>
 
@@ -120,7 +121,8 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
     { schema: { params: signupParamsSchema, body: signupBodySchema } },
     async (request, reply) => {
       const { id: podRoundId } = request.params
-      const { discordId, username, sourceGuildId } = request.body
+      const { discordId, username, sourceGuildId, action } = request.body
+      const status = action === 'leave' ? 'LEFT' : 'IN'
 
       const round = await deps.prisma.podRound.findUnique({
         where: { id: podRoundId },
@@ -132,8 +134,8 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
 
       await deps.prisma.podRoundSignup.upsert({
         where: { podRoundId_discordId: { podRoundId, discordId } },
-        create: { podRoundId, discordId, usernameSnapshot: username, sourceGuildId, status: 'IN' },
-        update: { status: 'IN' },
+        create: { podRoundId, discordId, usernameSnapshot: username, sourceGuildId, status },
+        update: { status },
       })
 
       const count = await deps.prisma.podRoundSignup.count({
