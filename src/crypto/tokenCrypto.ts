@@ -20,10 +20,14 @@ export function encryptToken(plaintext: string, keyHex: string): string {
 }
 
 export function decryptToken(ciphertext: string, keyHex: string): string {
-  const [ivHex, authTagHex, encryptedHex] = ciphertext.split(':')
-  if (!ivHex || !authTagHex || !encryptedHex) {
+  // Exactly 3 segments, not a truthiness check on each — an empty-string
+  // plaintext legitimately encrypts to an empty third segment ("iv:tag:"),
+  // which a `!encryptedHex` check would wrongly reject as malformed.
+  const parts = ciphertext.split(':')
+  if (parts.length !== 3 || !parts[0] || !parts[1]) {
     throw new Error('Malformed encrypted token')
   }
+  const [ivHex, authTagHex, encryptedHex] = parts
 
   const key = Buffer.from(keyHex, 'hex')
   const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(ivHex, 'hex'))
