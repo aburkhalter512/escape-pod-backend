@@ -33,16 +33,26 @@ Only discord-bot should ever call this service — every route except
 
 ## Status
 
-Scaffolding only. Routes implement the happy path described in
-INTEGRATIONS.md §7.5 and §8.2-§8.3; see TODO comments for known gaps,
-most notably:
+Core loop implemented and tested: account linking (§8.2-§8.3), guild
+subscriptions/allowlisting (§7.2), and the full pod-round lifecycle
+(§7.5) — `/pods/start` now resolves each target's real broadcast channel
+from its `GuildSubscription` and returns it so discord-bot can post there;
+`/pods/:id/targets/:guildId/message` records the resulting Discord message
+ID; `/pods/:id/signup` returns every target (with its `messageId`) so
+discord-bot can fan the updated count out across guilds.
+
+Known gaps — see `../tasks/` for the full tracked list, most relevant here:
 
 - `/organizers/:discordId/eligible-guilds` returns `guildId` as a
   placeholder `name` — guild display names aren't threaded through from
   Discord yet (`src/routes/organizers.ts`).
-- `/pods/start` creates `PodRoundTarget` rows but does not post the actual
-  Discord messages — that's discord-bot's job once it has `podRoundId`,
-  not yet wired up.
 - `src/jobs/refreshTokens.ts` is a job body only — not yet attached to a
   scheduler, and has no way to notify an organizer when refresh fails
   (§8.3's DM fallback).
+- `../tasks/001-signup-concurrency-race.md` — the threshold-check-then-
+  create-pod flow in `/pods/:id/signup` isn't safe under concurrent
+  requests yet.
+- `../tasks/002-leave-button-not-wired.md` — "Leave" doesn't decrement
+  the count; the route always records `IN`.
+- `../tasks/003-backend-route-input-validation.md` — no request schema
+  validation on any route yet.

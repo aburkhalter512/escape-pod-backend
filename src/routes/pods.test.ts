@@ -12,6 +12,8 @@ function buildApp(overrides: { prisma?: Record<string, unknown>; ptp?: Partial<P
   const prisma = {
     podRound: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
     podRoundSignup: { upsert: vi.fn(), count: vi.fn() },
+    podRoundTarget: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn(), update: vi.fn() },
+    guildSubscription: { findMany: vi.fn().mockResolvedValue([]) },
     ...overrides.prisma,
   } as unknown as PrismaClient
   const ptp = {
@@ -36,9 +38,19 @@ function fakeRound(overrides: Record<string, unknown> = {}) {
 }
 
 describe('POST /pods/start', () => {
-  it('creates a round with a PodRoundTarget per guild and returns its id', async () => {
+  function subscriptions() {
+    return [
+      { guildId: 'g1', broadcastChannelId: 'channel-1' },
+      { guildId: 'g2', broadcastChannelId: 'channel-2' },
+    ]
+  }
+
+  it('resolves each target guild\'s broadcast channel and returns it alongside the round id', async () => {
     const { app, prisma } = buildApp({
-      prisma: { podRound: { create: vi.fn().mockResolvedValue({ id: 'round-1' }) } },
+      prisma: {
+        podRound: { create: vi.fn().mockResolvedValue({ id: 'round-1' }) },
+        guildSubscription: { findMany: vi.fn().mockResolvedValue(subscriptions()) },
+      },
     })
 
     const response = await app.inject({
@@ -48,15 +60,39 @@ describe('POST /pods/start', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual({ podRoundId: 'round-1' })
+    expect(response.json()).toEqual({
+      podRoundId: 'round-1',
+      targets: [{ guildId: 'g1', channelId: 'channel-1' }, { guildId: 'g2', channelId: 'channel-2' }],
+    })
     expect(prisma.podRound.create).toHaveBeenCalledWith({
       data: {
         organizerDiscordId: 'organizer-1',
         setCode: 'JTL',
         threshold: 8,
-        targets: { create: [{ guildId: 'g1', channelId: '' }, { guildId: 'g2', channelId: '' }] },
+        targets: {
+          create: [{ guildId: 'g1', channelId: 'channel-1' }, { guildId: 'g2', channelId: 'channel-2' }],
+        },
       },
     })
+  })
+
+  it('silently drops a guildId whose subscription no longer exists rather than failing the whole round', async () => {
+    // e.g. a guild unsubscribed between /start-pod's eligibility check and
+    // this call — a stale target shouldn't block starting the round.
+    const { app } = buildApp({
+      prisma: {
+        podRound: { create: vi.fn().mockResolvedValue({ id: 'round-1' }) },
+        guildSubscription: { findMany: vi.fn().mockResolvedValue([subscriptions()[0]]) },
+      },
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/pods/start',
+      payload: { organizerDiscordId: 'organizer-1', setCode: 'JTL', threshold: 8, guildIds: ['g1', 'g2-gone'] },
+    })
+
+    expect(response.json().targets).toEqual([{ guildId: 'g1', channelId: 'channel-1' }])
   })
 
   it('handles an empty guildIds list without erroring', async () => {
@@ -69,6 +105,47 @@ describe('POST /pods/start', () => {
     })
 
     expect(response.statusCode).toBe(200)
+    expect(response.json().targets).toEqual([])
+  })
+})
+
+describe('POST /pods/:id/targets/:guildId/message', () => {
+  it('records the messageId on the matching target', async () => {
+    const { app, prisma } = buildApp({
+      prisma: {
+        podRoundTarget: {
+          findUnique: vi.fn().mockResolvedValue({ podRoundId: 'round-1', guildId: 'g1' }),
+          update: vi.fn(),
+        },
+      },
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/pods/round-1/targets/g1/message',
+      payload: { messageId: 'msg-1' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(prisma.podRoundTarget.update).toHaveBeenCalledWith({
+      where: { podRoundId_guildId: { podRoundId: 'round-1', guildId: 'g1' } },
+      data: { messageId: 'msg-1' },
+    })
+  })
+
+  it('returns 404 when there is no target for that round/guild pair', async () => {
+    const { app, prisma } = buildApp({
+      prisma: { podRoundTarget: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } },
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/pods/round-1/targets/unknown-guild/message',
+      payload: { messageId: 'msg-1' },
+    })
+
+    expect(response.statusCode).toBe(404)
+    expect(prisma.podRoundTarget.update).not.toHaveBeenCalled()
   })
 })
 
@@ -99,7 +176,14 @@ describe('POST /pods/:id/signup', () => {
       payload: { discordId: 'player-1', username: 'PlayerOne', sourceGuildId: 'guild-1' },
     })
 
-    expect(response.json()).toEqual({ count: 5, threshold: 8, thresholdReached: false, podCreated: false })
+    expect(response.json()).toEqual({
+      count: 5,
+      threshold: 8,
+      setCode: 'JTL',
+      thresholdReached: false,
+      podCreated: false,
+      targets: [],
+    })
     expect(prisma.podRoundSignup.upsert).toHaveBeenCalledWith({
       where: { podRoundId_discordId: { podRoundId: 'round-1', discordId: 'player-1' } },
       create: { podRoundId: 'round-1', discordId: 'player-1', usernameSnapshot: 'PlayerOne', sourceGuildId: 'guild-1', status: 'IN' },
@@ -108,12 +192,17 @@ describe('POST /pods/:id/signup', () => {
     expect(ptp.createPod).not.toHaveBeenCalled()
   })
 
-  it('creates the PTP pod once the signup pushes the count to threshold', async () => {
+  it('creates the PTP pod once the signup pushes the count to threshold, and returns every target for cross-guild sync', async () => {
     const round = fakeRound()
+    const targetRows = [
+      { guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1' },
+      { guildId: 'g2', channelId: 'channel-2', messageId: null },
+    ]
     const { app, prisma, ptp } = buildApp({
       prisma: {
         podRound: { findUnique: vi.fn().mockResolvedValue(round), update: vi.fn() },
         podRoundSignup: { upsert: vi.fn(), count: vi.fn().mockResolvedValue(8) },
+        podRoundTarget: { findMany: vi.fn().mockResolvedValue(targetRows) },
       },
       ptp: {
         createPod: vi.fn().mockResolvedValue({
@@ -139,9 +228,11 @@ describe('POST /pods/:id/signup', () => {
     expect(response.json()).toEqual({
       count: 8,
       threshold: 8,
+      setCode: 'JTL',
       thresholdReached: true,
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      targets: targetRows,
     })
   })
 
