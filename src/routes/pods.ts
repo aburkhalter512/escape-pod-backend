@@ -145,28 +145,42 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
       let shareUrl: string | undefined
 
       if (thresholdReached && round.status === 'COLLECTING') {
-        try {
-          const token = decryptToken(round.organizer.encryptedToken, deps.tokenEncryptionKey)
-          const result = await deps.ptp.createPod(token, {
-            setCode: round.setCode,
-            maxPlayers: round.threshold,
-          })
-          await deps.prisma.podRound.update({
-            where: { id: podRoundId },
-            data: { status: 'POD_CREATED', ptpPodShareId: result.shareId },
-          })
-          podCreated = true
-          shareUrl = result.shareUrl
-        } catch (err) {
-          // Pod creation failed (e.g. expired/revoked token) even though
-          // we've hit the player threshold — mark it so this doesn't
-          // silently retry on every subsequent signup. Needs an operator-
-          // facing alert path, not yet built.
-          app.log.error({ err, podRoundId }, 'PTP pod creation failed after threshold reached')
-          await deps.prisma.podRound.update({
-            where: { id: podRoundId },
-            data: { status: 'THRESHOLD_REACHED' },
-          })
+        // §7.5 step 4 / tasks/001: a plain read-then-write here is racy —
+        // two signups landing close together could both observe
+        // status: 'COLLECTING' and both call ptp.createPod. Postgres
+        // serializes conditional UPDATEs, so this WHERE-guarded
+        // updateMany atomically claims the transition for exactly one
+        // concurrent caller; everyone else sees count: 0 and skips PTP
+        // entirely. The claim itself lands on THRESHOLD_REACHED — the
+        // same status the failure path below already used — so a claim
+        // that's never followed by a successful create still leaves the
+        // round in a correct, non-retrying state.
+        const claim = await deps.prisma.podRound.updateMany({
+          where: { id: podRoundId, status: 'COLLECTING' },
+          data: { status: 'THRESHOLD_REACHED' },
+        })
+
+        if (claim.count === 1) {
+          try {
+            const token = decryptToken(round.organizer.encryptedToken, deps.tokenEncryptionKey)
+            const result = await deps.ptp.createPod(token, {
+              setCode: round.setCode,
+              maxPlayers: round.threshold,
+            })
+            await deps.prisma.podRound.update({
+              where: { id: podRoundId },
+              data: { status: 'POD_CREATED', ptpPodShareId: result.shareId },
+            })
+            podCreated = true
+            shareUrl = result.shareUrl
+          } catch (err) {
+            // Pod creation failed (e.g. expired/revoked token) even though
+            // we've hit the player threshold — the claim above already
+            // recorded THRESHOLD_REACHED, so this doesn't silently retry
+            // on every subsequent signup. Needs an operator-facing alert
+            // path, not yet built.
+            app.log.error({ err, podRoundId }, 'PTP pod creation failed after threshold reached')
+          }
         }
       }
 

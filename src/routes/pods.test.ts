@@ -16,6 +16,7 @@ const TOKEN_KEY = '00'.repeat(32) // 32-byte hex key, fine for tests
 type PodRoundCreateArgs = Parameters<AppPrismaClient['podRound']['create']>[0]
 type PodRoundRow = Awaited<ReturnType<AppPrismaClient['podRound']['create']>>
 type PodRoundUpdateArgs = Parameters<AppPrismaClient['podRound']['update']>[0]
+type PodRoundUpdateManyArgs = Parameters<AppPrismaClient['podRound']['updateMany']>[0]
 type PodRoundWithOrganizer = Prisma.PodRoundGetPayload<{ include: { organizer: true } }>
 type GuildSubscriptionFindManyArgs = Parameters<AppPrismaClient['guildSubscription']['findMany']>[0]
 type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['findMany']>>[number]
@@ -384,6 +385,14 @@ describe('POST /pods/:id/signup', () => {
       fakePodRoundTargetRow({ guildId: 'g2', channelId: 'channel-2', messageId: null }),
     ]
     const findUnique = stubPodRoundFindUnique(async () => round)
+    const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
+      const expected: PodRoundUpdateManyArgs = {
+        where: { id: 'round-1', status: 'COLLECTING' },
+        data: { status: 'THRESHOLD_REACHED' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
+      return { count: 1 }
+    })
     const update = stub(async (args: PodRoundUpdateArgs) => {
       const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'POD_CREATED', ptpPodShareId: 'share-1' } }
       if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.update args: ${JSON.stringify(args)}`)
@@ -404,7 +413,7 @@ describe('POST /pods/:id/signup', () => {
     })
     const { app } = buildApp({
       prisma: {
-        podRound: { findUnique, update },
+        podRound: { findUnique, update, updateMany },
         podRoundSignup: { upsert, count },
         podRoundTarget: { findMany: findManyTargets },
       },
@@ -428,13 +437,81 @@ describe('POST /pods/:id/signup', () => {
     })
   })
 
+  it('only calls PTP once when two signups race to push the round past threshold (tasks/001)', async () => {
+    const round = fakeRoundWithOrganizer()
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    // Models Postgres's row-level serialization of the conditional UPDATE
+    // this fix relies on: exactly one concurrent caller's
+    // `WHERE status = 'COLLECTING'` ever matches, no matter how the two
+    // requests interleave — everyone else sees count: 0.
+    let claimed = false
+    const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
+      const expected: PodRoundUpdateManyArgs = {
+        where: { id: 'round-1', status: 'COLLECTING' },
+        data: { status: 'THRESHOLD_REACHED' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
+      if (claimed) return { count: 0 }
+      claimed = true
+      return { count: 1 }
+    })
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'POD_CREATED', ptpPodShareId: 'share-1' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow()
+    })
+    const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
+    const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
+    const createPod = stub(async (_token: string, _params: CreatePodParams) => ({
+      id: 'ptp-pod-1',
+      shareId: 'share-1',
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      createdAt: '2026-01-01T00:00:00Z',
+    }))
+    const { app } = buildApp({
+      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, count } },
+      ptp: { createPod },
+    })
+
+    const [responseA, responseB] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/pods/round-1/signup',
+        payload: { discordId: 'player-7', username: 'PlayerSeven', sourceGuildId: 'guild-1' },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/pods/round-1/signup',
+        payload: { discordId: 'player-8', username: 'PlayerEight', sourceGuildId: 'guild-1' },
+      }),
+    ])
+
+    expect(responseA.statusCode).toBe(200)
+    expect(responseB.statusCode).toBe(200)
+    expect(updateMany.calls).toHaveLength(2)
+    expect(createPod.calls).toHaveLength(1)
+    // Exactly one request won the claim and actually created the pod —
+    // the other still gets a coherent 200 with podCreated: false, not a
+    // duplicate pod or an error.
+    const podCreatedFlags = [responseA.json().podCreated, responseB.json().podCreated]
+    expect(podCreatedFlags.filter(Boolean)).toHaveLength(1)
+  })
+
   it('marks the round THRESHOLD_REACHED (not an error response) when PTP pod creation fails after threshold is hit', async () => {
     const round = fakeRoundWithOrganizer()
     const findUnique = stubPodRoundFindUnique(async () => round)
-    const update = stub(async (args: PodRoundUpdateArgs) => {
-      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'THRESHOLD_REACHED' } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.update args: ${JSON.stringify(args)}`)
-      return fakePodRoundRow()
+    const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
+      const expected: PodRoundUpdateManyArgs = {
+        where: { id: 'round-1', status: 'COLLECTING' },
+        data: { status: 'THRESHOLD_REACHED' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
+      return { count: 1 }
+    })
+    const update = stub(async (_args: PodRoundUpdateArgs) => {
+      // The atomic claim (updateMany) already recorded THRESHOLD_REACHED —
+      // a failed PTP call shouldn't need a separate update call.
+      throw new Error('podRound.update should not have been called')
     })
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
     const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
@@ -442,7 +519,7 @@ describe('POST /pods/:id/signup', () => {
       throw new Error('PTP pod creation failed: 401')
     })
     const { app } = buildApp({
-      prisma: { podRound: { findUnique, update }, podRoundSignup: { upsert, count } },
+      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, count } },
       ptp: { createPod },
     })
 

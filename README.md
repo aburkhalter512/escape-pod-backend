@@ -51,8 +51,5 @@ Known gaps — see `../tasks/` for the full tracked list, most relevant here:
 - `src/jobs/refreshTokens.ts` is a job body only — not yet attached to a
   scheduler, and has no way to notify an organizer when refresh fails
   (§8.3's DM fallback).
-- `../tasks/001-signup-concurrency-race.md` — the threshold-check-then-
-  create-pod flow in `/pods/:id/signup` isn't safe under concurrent
-  requests yet.
 - `../tasks/002-leave-button-not-wired.md` — "Leave" doesn't decrement
   the count; the route always records `IN`.

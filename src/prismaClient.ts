@@ -35,6 +35,12 @@ export interface AppPrismaClient {
       args: Prisma.SelectSubset<T, Prisma.PodRoundFindUniqueArgs>
     ): Promise<Prisma.PodRoundGetPayload<T> | null>
     update: Method<PrismaClient['podRound']['update']>
+    // Used as an atomic compare-and-swap (WHERE status: 'COLLECTING') to
+    // claim the right to create the PTP pod — see tasks/001. A plain
+    // findUnique-then-update is racy under concurrent signups; Postgres
+    // serializes conditional UPDATEs, so only one concurrent caller ever
+    // sees count: 1.
+    updateMany: Method<PrismaClient['podRound']['updateMany']>
   }
   podRoundTarget: {
     findMany: Method<PrismaClient['podRoundTarget']['findMany']>
