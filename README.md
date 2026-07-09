@@ -1,4 +1,4 @@
-# draft-pod-backend
+# escape-pod-backend
 
 Owns all durable state (organizers, guild subscriptions, pod rounds/targets/
 signups) and the Protect the Pod integration. Called by the
