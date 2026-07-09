@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import Fastify from 'fastify'
+import { zodValidatorCompiler } from '../validation.js'
 import type { PrismaClient } from '@prisma/client'
 import { registerGuildRoutes } from './guilds.js'
 
 function buildApp(overrides: { prisma?: Record<string, unknown> } = {}) {
   const app = Fastify()
+  app.setValidatorCompiler(zodValidatorCompiler)
   const prisma = {
     guildSubscription: { upsert: vi.fn() },
     guildOrganizerAllowlist: { upsert: vi.fn() },
@@ -49,6 +51,19 @@ describe('POST /guilds/subscribe', () => {
     const call = (prisma.guildSubscription.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(call.update).not.toHaveProperty('installedByDiscordId')
   })
+
+  it('rejects a body missing a required field with 400, before touching prisma', async () => {
+    const { app, prisma } = buildApp()
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/subscribe',
+      payload: { guildId: 'guild-1', channelId: 'channel-1' }, // no installedBy
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(prisma.guildSubscription.upsert).not.toHaveBeenCalled()
+  })
 })
 
 describe('POST /guilds/allow-organizer', () => {
@@ -80,5 +95,18 @@ describe('POST /guilds/allow-organizer', () => {
 
     const call = (prisma.guildOrganizerAllowlist.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(call.update).toEqual({ approvedBy: 'admin-2' })
+  })
+
+  it('rejects a non-string organizerDiscordId with 400', async () => {
+    const { app, prisma } = buildApp()
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/allow-organizer',
+      payload: { guildId: 'guild-1', organizerDiscordId: 12345, approvedBy: 'admin-1' },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(prisma.guildOrganizerAllowlist.upsert).not.toHaveBeenCalled()
   })
 })

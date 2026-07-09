@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import Fastify from 'fastify'
+import { zodValidatorCompiler } from '../validation.js'
 import type { PrismaClient } from '@prisma/client'
 import type { PtpClient } from '../ptp/client.js'
 import { registerOrganizerRoutes } from './organizers.js'
@@ -13,6 +14,7 @@ const FUTURE_EXP = () => Math.floor(Date.now() / 1000) + 3600
 
 function buildApp(overrides: { prisma?: Record<string, unknown>; ptp?: Partial<PtpClient> } = {}) {
   const app = Fastify()
+  app.setValidatorCompiler(zodValidatorCompiler)
   const prisma = {
     organizer: { upsert: vi.fn() },
     guildSubscription: { findMany: vi.fn() },
@@ -90,6 +92,32 @@ describe('POST /organizers/link', () => {
 
     expect(response.statusCode).toBe(422)
     expect(prisma.organizer.upsert).not.toHaveBeenCalled()
+  })
+
+  it('rejects a body missing the token field with 400, before calling PTP', async () => {
+    const { app, ptp } = buildApp()
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/organizers/link',
+      payload: { discordId: 'user-1' },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(ptp.validateToken).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty-string discordId with 400', async () => {
+    const { app, ptp } = buildApp()
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/organizers/link',
+      payload: { discordId: '', token: 'some-token' },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(ptp.validateToken).not.toHaveBeenCalled()
   })
 })
 

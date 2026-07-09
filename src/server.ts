@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import { PrismaClient } from '@prisma/client'
 import { requireBotApiKey } from './auth.js'
 import { PtpClient } from './ptp/client.js'
+import { zodValidatorCompiler } from './validation.js'
 import { registerOrganizerRoutes } from './routes/organizers.js'
 import { registerGuildRoutes } from './routes/guilds.js'
 import { registerPodRoutes } from './routes/pods.js'
@@ -14,6 +15,7 @@ const prisma = new PrismaClient()
 const ptp = new PtpClient({ baseUrl: ptpBaseUrl })
 
 const app = Fastify()
+app.setValidatorCompiler(zodValidatorCompiler)
 
 // /healthz stays outside this encapsulated scope so infra health probes
 // don't need the bot's API key — Fastify's addHook only applies within the

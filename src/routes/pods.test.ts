@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import Fastify from 'fastify'
+import { zodValidatorCompiler } from '../validation.js'
 import type { PrismaClient } from '@prisma/client'
 import type { PtpClient } from '../ptp/client.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
@@ -9,6 +10,7 @@ const TOKEN_KEY = '00'.repeat(32) // 32-byte hex key, fine for tests
 
 function buildApp(overrides: { prisma?: Record<string, unknown>; ptp?: Partial<PtpClient> } = {}) {
   const app = Fastify()
+  app.setValidatorCompiler(zodValidatorCompiler)
   const prisma = {
     podRound: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
     podRoundSignup: { upsert: vi.fn(), count: vi.fn() },
@@ -107,6 +109,74 @@ describe('POST /pods/start', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json().targets).toEqual([])
   })
+
+  describe('request validation', () => {
+    const validPayload = {
+      organizerDiscordId: 'organizer-1',
+      setCode: 'JTL',
+      threshold: 8,
+      guildIds: ['g1'],
+    }
+
+    it('rejects a missing required field with 400, before touching prisma', async () => {
+      const { app, prisma } = buildApp()
+      const { guildIds, ...withoutGuildIds } = validPayload
+      void guildIds
+
+      const response = await app.inject({ method: 'POST', url: '/pods/start', payload: withoutGuildIds })
+
+      expect(response.statusCode).toBe(400)
+      expect(prisma.podRound.create).not.toHaveBeenCalled()
+    })
+
+    it.each([5, 9, 0, -1])('rejects a threshold outside the 6-8 range (%i)', async (threshold) => {
+      const { app } = buildApp()
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/pods/start',
+        payload: { ...validPayload, threshold },
+      })
+
+      expect(response.statusCode).toBe(400)
+    })
+
+    it('rejects a non-integer threshold', async () => {
+      const { app } = buildApp()
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/pods/start',
+        payload: { ...validPayload, threshold: 6.5 },
+      })
+
+      expect(response.statusCode).toBe(400)
+    })
+
+    it('rejects guildIds that is not an array of strings', async () => {
+      const { app } = buildApp()
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/pods/start',
+        payload: { ...validPayload, guildIds: [123, 'g2'] },
+      })
+
+      expect(response.statusCode).toBe(400)
+    })
+
+    it('rejects an empty-string setCode', async () => {
+      const { app } = buildApp()
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/pods/start',
+        payload: { ...validPayload, setCode: '' },
+      })
+
+      expect(response.statusCode).toBe(400)
+    })
+  })
 })
 
 describe('POST /pods/:id/targets/:guildId/message', () => {
@@ -145,6 +215,23 @@ describe('POST /pods/:id/targets/:guildId/message', () => {
     })
 
     expect(response.statusCode).toBe(404)
+    expect(prisma.podRoundTarget.update).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty-string messageId with 400 rather than storing it', async () => {
+    const { app, prisma } = buildApp({
+      prisma: {
+        podRoundTarget: { findUnique: vi.fn().mockResolvedValue({ podRoundId: 'round-1', guildId: 'g1' }), update: vi.fn() },
+      },
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/pods/round-1/targets/g1/message',
+      payload: { messageId: '' },
+    })
+
+    expect(response.statusCode).toBe(400)
     expect(prisma.podRoundTarget.update).not.toHaveBeenCalled()
   })
 })
@@ -284,6 +371,19 @@ describe('POST /pods/:id/signup', () => {
     expect(prisma.podRound.update).not.toHaveBeenCalled()
     expect(response.json()).toMatchObject({ thresholdReached: true, podCreated: false })
   })
+
+  it('rejects a signup body missing a required field with 400, before reading the round', async () => {
+    const { app, prisma } = buildApp()
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/pods/round-1/signup',
+      payload: { discordId: 'player-1', username: 'PlayerOne' }, // no sourceGuildId
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(prisma.podRound.findUnique).not.toHaveBeenCalled()
+  })
 })
 
 describe('POST /pods/:id/cancel', () => {
@@ -330,5 +430,14 @@ describe('POST /pods/:id/cancel', () => {
       where: { id: 'round-1' },
       data: { status: 'CANCELLED' },
     })
+  })
+
+  it('rejects a missing requestedBy with 400, before reading the round', async () => {
+    const { app, prisma } = buildApp()
+
+    const response = await app.inject({ method: 'POST', url: '/pods/round-1/cancel', payload: {} })
+
+    expect(response.statusCode).toBe(400)
+    expect(prisma.podRound.findUnique).not.toHaveBeenCalled()
   })
 })

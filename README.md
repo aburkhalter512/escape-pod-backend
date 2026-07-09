@@ -39,7 +39,9 @@ subscriptions/allowlisting (§7.2), and the full pod-round lifecycle
 from its `GuildSubscription` and returns it so discord-bot can post there;
 `/pods/:id/targets/:guildId/message` records the resulting Discord message
 ID; `/pods/:id/signup` returns every target (with its `messageId`) so
-discord-bot can fan the updated count out across guilds.
+discord-bot can fan the updated count out across guilds. Every route
+validates its body/params against a Zod schema (`src/validation.ts`) and
+400s on malformed input before touching Prisma or PTP.
 
 Known gaps — see `../tasks/` for the full tracked list, most relevant here:
 
@@ -54,5 +56,3 @@ Known gaps — see `../tasks/` for the full tracked list, most relevant here:
   requests yet.
 - `../tasks/002-leave-button-not-wired.md` — "Leave" doesn't decrement
   the count; the route always records `IN`.
-- `../tasks/003-backend-route-input-validation.md` — no request schema
-  validation on any route yet.
