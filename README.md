@@ -2,8 +2,8 @@
 
 Owns all durable state (organizers, guild subscriptions, pod rounds/targets/
 signups) and the Protect the Pod integration. Called by the
-[discord-bot](../discord-bot) service's internal API — never talks to
-Discord directly.
+[discord-bot](https://github.com/aburkhalter512/escape-pod) service's
+internal API — never talks to Discord directly.
 
 Design rationale lives in [`INTEGRATIONS.md`](https://github.com/aburkhalter512/escape-pod/blob/main/INTEGRATIONS.md)
 (lives in the [escape-pod](https://github.com/aburkhalter512/escape-pod)
