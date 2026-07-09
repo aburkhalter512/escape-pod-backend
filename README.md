@@ -47,15 +47,35 @@ different situations:
   run yet. Never generates new migrations or touches existing data beyond
   what the SQL says. This is what a deploy pipeline should run.
 
+## Container
+
+`Dockerfile` is a two-stage build: the `build` stage installs full deps,
+generates the Prisma client, and compiles TypeScript; the `runtime` stage
+copies over only the pruned (`--omit=dev`) `node_modules`, `dist/`, and
+`prisma/`, and runs as the image's built-in non-root `node` user.
+Migrations are **not** run automatically on container start — run
+`npm run prisma:deploy` as its own step against whatever `DATABASE_URL`
+the target environment provides, same as any non-containerized deploy.
+
+```bash
+docker build -t escape-pod-backend .
+docker run --rm -p 3001:3001 \
+  -e DATABASE_URL=... -e TOKEN_ENCRYPTION_KEY=... -e BOT_API_KEY=... -e PTP_BASE_URL=... \
+  escape-pod-backend
+```
+
+No registry is configured — this isn't wired to a deploy target yet, just
+buildable and runnable locally (verified against both Docker and Podman).
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every push to `main` and every PR:
 `npm ci` (also runs `prisma generate` via `postinstall`), typecheck,
-lint, test, build, then `npm run prisma:deploy` against a throwaway
-Postgres service container — catching a schema change that never got a
-migration, or a migration that doesn't actually apply cleanly. This
-doesn't deploy anywhere; it's the same verification you'd want before
-merging, automated.
+lint, test, build, `npm run prisma:deploy` against a throwaway Postgres
+service container (catching a schema change that never got a migration,
+or a migration that doesn't actually apply cleanly), then a Docker build
+of the image above. Nothing here deploys anywhere or pushes an image
+anywhere; it's the same verification you'd want before merging, automated.
 
 ## Status
 
