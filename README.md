@@ -5,10 +5,11 @@ signups) and the Protect the Pod integration. Called by the
 [discord-bot](../discord-bot) service's internal API — never talks to
 Discord directly.
 
-Design rationale lives in [`../INTEGRATIONS.md`](../INTEGRATIONS.md) — start
-with the "Summary" section, then §7.3 (data model), §4.1/§4.1.1 (PTP's own
-API surface and its auth boundaries), and §8 (the account-linking flow this
-repo's `/organizers/link` route implements).
+Design rationale lives in [`INTEGRATIONS.md`](https://github.com/aburkhalter512/escape-pod/blob/main/INTEGRATIONS.md)
+(lives in the [escape-pod](https://github.com/aburkhalter512/escape-pod)
+repo) — start with the "Summary" section, then §7.3 (data model),
+§4.1/§4.1.1 (PTP's own API surface and its auth boundaries), and §8 (the
+account-linking flow this repo's `/organizers/link` route implements).
 
 ## Why a separate repo from discord-bot
 
