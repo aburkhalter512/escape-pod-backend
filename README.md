@@ -24,13 +24,33 @@ call rather than folding it into the Discord-facing process.
 
 ```bash
 npm install
-cp .env.example .env   # fill in DATABASE_URL, TOKEN_ENCRYPTION_KEY, BOT_API_KEY
-npm run prisma:migrate  # applies prisma/migrations/ to your DATABASE_URL, prompts for new ones if the schema changed
+cp .env.example .env   # fill in TOKEN_ENCRYPTION_KEY, BOT_API_KEY — DATABASE_URL is already set for scripts/db.sh's container
 npm run dev
 ```
 
+`npm run dev` (`scripts/dev.sh`) brings up a local Postgres container
+(`scripts/db.sh`, needs a working `docker` or `podman` — see below),
+applies any pending migrations, and starts the server in watch mode. The
+DB container is left running after you Ctrl+C the server (fast restarts);
+`npm run db:down` stops it, `npm run db:destroy` also drops its data.
+
 Only discord-bot should ever call this service — every route except
 `/healthz` requires `Authorization: Bearer <BOT_API_KEY>` (see `src/auth.ts`).
+
+### Local Postgres
+
+`scripts/db.sh` manages a single `postgres:16` container
+(`escape-pod-backend-db`, named volume for persistence) — auto-detects
+whichever of `docker` or `podman` is actually running, so it works the
+same whether you have Docker Desktop or set up Podman instead (`brew
+install podman && podman machine init && podman machine start` — no GUI
+app required):
+
+```bash
+npm run db:up       # create (first time) or start the container, wait until ready
+npm run db:down      # stop it, keep its data
+npm run db:destroy   # remove the container and its data volume
+```
 
 ### Migrations
 
@@ -42,10 +62,11 @@ different situations:
   Diffs your schema against the DB, generates a new migration file for any
   change, and applies it. Never run this against a production database —
   it can prompt to reset the DB if it detects drift.
-- `npm run prisma:deploy` (`prisma migrate deploy`) — production/CI.
-  Applies whatever migrations exist in `prisma/migrations/` that haven't
-  run yet. Never generates new migrations or touches existing data beyond
-  what the SQL says. This is what a deploy pipeline should run.
+- `npm run prisma:deploy` (`prisma migrate deploy`) — production/CI, and
+  what `npm run dev` applies automatically on startup. Applies whatever
+  migrations exist in `prisma/migrations/` that haven't run yet. Never
+  generates new migrations or touches existing data beyond what the SQL
+  says.
 
 ## Container
 

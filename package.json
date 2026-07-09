@@ -6,7 +6,11 @@
   "type": "module",
   "scripts": {
     "postinstall": "prisma generate",
-    "dev": "tsx watch src/server.ts",
+    "dev": "scripts/dev.sh",
+    "dev:server": "tsx watch --env-file=.env src/server.ts",
+    "db:up": "scripts/db.sh up",
+    "db:down": "scripts/db.sh down",
+    "db:destroy": "scripts/db.sh destroy",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "lint": "eslint src",
